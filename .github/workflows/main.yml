@@ -8,7 +8,6 @@ on:
 env:
   TOOLCHAIN: cruel
   INSTALLER: yes
-  # This is a known KVM patch for Exynos 9820 (Kernel 4.14)
   KVM_PATCH_URL: https://raw.githubusercontent.com/J-Z-B/G97xF-Kernel/master/kvm.patch
 
 jobs:
@@ -18,7 +17,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # G970F=S10e, G973F=S10, G975F=S10+, N975F=Note10+
         model: [ "G970F,G973F,G975F", "N975F" ]
 
     steps:
@@ -39,22 +37,30 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y -qq libtinfo5 ccache libssl-dev build-essential flex bison wget curl git
 
+      - name: Create Clean Cache Key
+        id: cache_key
+        run: |
+          # This replaces commas with underscores so GitHub Cache doesn't crash
+          CLEAN_NAME=$(echo "${{ matrix.model }}" | tr ',' '_')
+          echo "MODEL_KEY=$CLEAN_NAME" >> $GITHUB_OUTPUT
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ env.TOOLCHAIN }}-${{ steps.cache_key.outputs.MODEL_KEY }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ env.TOOLCHAIN }}-${{ steps.cache_key.outputs.MODEL_KEY }}-
+
       - name: Download and Apply KVM Patch
         run: |
-          echo "Downloading KVM patch from source..."
           wget -q ${{ env.KVM_PATCH_URL }} -O kvm.patch || echo "Download failed"
-          
           if [ -f kvm.patch ]; then
-            echo "Applying KVM patch to kernel source..."
             git apply --ignore-whitespace kvm.patch || patch -p1 < kvm.patch || echo "Patch applied with warnings"
-          else
-            echo "ERROR: KVM patch file not found!"
-            exit 1
           fi
 
       - name: Force Disable Samsung Security (Required for KVM)
         run: |
-          echo "Modifying Kconfigs to strip Samsung RKP/UH..."
           find . -name "Kconfig" -type f -exec sed -i 's/config SEC_RKP/config SEC_RKP\n\tdepends on !KVM/g' {} +
           find . -name "Kconfig" -type f -exec sed -i 's/config UH/config UH\n\tdepends on !KVM/g' {} +
           sed -i 's/CONFIG_SEC_RKP=y/CONFIG_SEC_RKP=n/g' arch/arm64/configs/*
@@ -65,7 +71,6 @@ jobs:
         run: |
           DEFCONFIG_PATH=$(find arch/arm64/configs/ -name "*defconfig*" | head -n 1)
           if [ -n "$DEFCONFIG_PATH" ]; then
-            echo "Injecting KVM/OC flags into $DEFCONFIG_PATH"
             {
               echo ""
               echo "# KVM Hypervisor Support"
@@ -83,17 +88,8 @@ jobs:
             } >> "$DEFCONFIG_PATH"
           fi
 
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: ccache-${{ env.TOOLCHAIN }}-${{ matrix.model }}-${{ github.sha }}
-          restore-keys: |
-            ccache-${{ env.TOOLCHAIN }}-${{ matrix.model }}-
-
       - name: Deploy Toolchain
         run: |
-          echo "Cloning Cruel Toolchain..."
           git clone --depth 1 -j $(nproc) --branch $TOOLCHAIN --single-branch https://github.com/CruelKernel/toolchain.git toolchain
 
       - name: Kernel Configure
@@ -136,7 +132,7 @@ jobs:
       - name: Upload Kernel Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: CruelKernel-S10-KVM-${{ matrix.model }}
+          name: CruelKernel-S10-KVM-${{ steps.cache_key.outputs.MODEL_KEY }}
           path: |
             *.zip
             *.img
