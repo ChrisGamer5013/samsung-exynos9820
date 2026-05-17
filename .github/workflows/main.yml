@@ -37,17 +37,16 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
-          sudo apt-get install -y -qq libtinfo5 ccache libssl-dev build-essential flex bison base64 wget curl git
+          sudo apt-get install -y -qq libtinfo5 ccache libssl-dev build-essential flex bison wget curl git
 
       - name: Download and Apply KVM Patch
         run: |
           echo "Downloading KVM patch from source..."
-          wget -q ${{ env.KVM_PATCH_URL }} -O kvm.patch || echo "Download failed, checking if patch exists locally"
+          wget -q ${{ env.KVM_PATCH_URL }} -O kvm.patch || echo "Download failed"
           
           if [ -f kvm.patch ]; then
             echo "Applying KVM patch to kernel source..."
-            # Try git apply first, fallback to patch -p1
-            git apply --ignore-whitespace kvm.patch || patch -p1 < kvm.patch || echo "Patch applied with warnings (check logs)"
+            git apply --ignore-whitespace kvm.patch || patch -p1 < kvm.patch || echo "Patch applied with warnings"
           else
             echo "ERROR: KVM patch file not found!"
             exit 1
@@ -56,17 +55,14 @@ jobs:
       - name: Force Disable Samsung Security (Required for KVM)
         run: |
           echo "Modifying Kconfigs to strip Samsung RKP/UH..."
-          # Samsung's UH/RKP blocks KVM from using EL2. We must disable them.
           find . -name "Kconfig" -type f -exec sed -i 's/config SEC_RKP/config SEC_RKP\n\tdepends on !KVM/g' {} +
           find . -name "Kconfig" -type f -exec sed -i 's/config UH/config UH\n\tdepends on !KVM/g' {} +
-          # Ensure they are off in any existing defconfigs
           sed -i 's/CONFIG_SEC_RKP=y/CONFIG_SEC_RKP=n/g' arch/arm64/configs/*
           sed -i 's/CONFIG_UH=y/CONFIG_UH=n/g' arch/arm64/configs/*
           sed -i 's/CONFIG_TIMA=y/CONFIG_TIMA=n/g' arch/arm64/configs/*
 
       - name: Inject KVM & OC Flags into Defconfig
         run: |
-          # Find the primary defconfig for the build
           DEFCONFIG_PATH=$(find arch/arm64/configs/ -name "*defconfig*" | head -n 1)
           if [ -n "$DEFCONFIG_PATH" ]; then
             echo "Injecting KVM/OC flags into $DEFCONFIG_PATH"
@@ -102,7 +98,6 @@ jobs:
 
       - name: Kernel Configure
         run: |
-          # This runs the cruelbuild script with your custom flags
           ./cruelbuild config                    \
                        model=${{ matrix.model }} \
                        name="Cruel-KVM-OC"       \
@@ -126,7 +121,6 @@ jobs:
 
       - name: Install Android Build Tools (mkbootimg)
         run: |
-          # Download mkbootimg from AOSP
           mkdir -p bin
           curl -s https://android.googlesource.com/platform/system/tools/mkbootimg/+/refs/heads/master/mkbootimg.py?format=TEXT | base64 --decode > bin/mkbootimg
           chmod +x bin/mkbootimg
